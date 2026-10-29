@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import secrets
@@ -20,6 +21,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from ssstool import _state, _win
 from ssstool.errors import EXIT_CDP_UNAVAILABLE, EXIT_FAILURE, EXIT_USAGE, SsstoolError
@@ -47,6 +49,9 @@ class Session:
     started_at: str
     user_data_dir: str | None = None
     user_data_dir_source: str | None = None
+    proxy: str | None = None
+    proxy_bypass: str | None = None
+    stealth: bool = False
     warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -64,6 +69,9 @@ class Session:
             "started_at": self.started_at,
             "user_data_dir": self.user_data_dir,
             "user_data_dir_source": self.user_data_dir_source,
+            "proxy": self.proxy,
+            "proxy_bypass": self.proxy_bypass,
+            "stealth": self.stealth,
         }
 
 
@@ -135,10 +143,70 @@ def _prepare_profile(
         return fallback, warnings
 
 
-def _launch(chrome: Path, port: int, user_data_dir: Path | None) -> subprocess.Popen[bytes]:
+_PROXY_SCHEMES = {"http", "https", "socks5"}
+
+
+def _normalize_proxy(value: str) -> str:
+    """校验并规整无认证代理 URL（Chrome 的 --proxy-server 不接受账号密码）。"""
+    raw = value.strip()
+    parsed = urlsplit(raw)
+    scheme = parsed.scheme.lower()
+    if scheme not in _PROXY_SCHEMES:
+        raise SsstoolError(
+            "unsupported proxy scheme; use http://, https:// or socks5:// "
+            "(socks4 resolves DNS locally and leaks).",
+            code=EXIT_USAGE,
+        )
+    if parsed.username or parsed.password:
+        raise SsstoolError(
+            "authenticated proxies are not supported: Chrome cannot take credentials in "
+            "--proxy-server. Run a local relay that injects Proxy-Authorization.",
+            code=EXIT_USAGE,
+        )
+    try:
+        proxy_port = parsed.port
+    except ValueError as exc:
+        raise SsstoolError(f"invalid proxy port: {value}", code=EXIT_USAGE) from exc
+    if not parsed.hostname or proxy_port is None:
+        raise SsstoolError(
+            f"proxy must be scheme://host:port, e.g. socks5://127.0.0.1:1080: {value}",
+            code=EXIT_USAGE,
+        )
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        raise SsstoolError(f"proxy must not contain path/query/fragment: {value}", code=EXIT_USAGE)
+    host = parsed.hostname
+    host_part = f"[{host}]" if ":" in host else host
+    return f"{scheme}://{host_part}:{proxy_port}"
+
+
+def _stealth_args(proxy: str) -> list[str]:
+    """反检测启动参数：堵 WebRTC 非代理 UDP、QUIC、DNS 预取与本地域名解析。"""
+    parsed = urlsplit(proxy)
+    host = parsed.hostname or ""
+    rule = "MAP * ~NOTFOUND"
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        rule += f", EXCLUDE {host}"
+    return [
+        "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+        "--disable-quic",
+        "--dns-prefetch-disable",
+        f"--host-resolver-rules={rule}",
+    ]
+
+
+def _launch(
+    chrome: Path,
+    port: int,
+    user_data_dir: Path | None,
+    extra_args: list[str] | None = None,
+) -> subprocess.Popen[bytes]:
     args = [str(chrome)]
     if user_data_dir is not None:
         args.append(f"--user-data-dir={user_data_dir}")
+    if extra_args:
+        args.extend(extra_args)
     args.extend(
         [
             f"--remote-debugging-port={port}",
@@ -308,6 +376,9 @@ def open_browser(
     chrome_path: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
     force: bool = False,
+    proxy: str | None = None,
+    proxy_bypass: str | None = None,
+    stealth: bool = False,
 ) -> Session:
     _win.ensure_windows()
     if profile not in {"temp", "default"}:
@@ -321,6 +392,21 @@ def open_browser(
             "--profile default terminates ALL running Chrome windows; add --force to confirm.",
             code=EXIT_USAGE,
         )
+    if stealth and not proxy:
+        raise SsstoolError(
+            "--stealth requires --proxy: its DNS rule blocks all local name resolution.",
+            code=EXIT_USAGE,
+        )
+    if proxy_bypass and not proxy:
+        raise SsstoolError("--proxy-bypass requires --proxy.", code=EXIT_USAGE)
+    normalized_proxy = _normalize_proxy(proxy) if proxy else None
+    extra_args: list[str] = []
+    if normalized_proxy:
+        extra_args.append(f"--proxy-server={normalized_proxy}")
+    if proxy_bypass:
+        extra_args.append(f"--proxy-bypass-list={proxy_bypass}")
+    if stealth and normalized_proxy:
+        extra_args.extend(_stealth_args(normalized_proxy))
 
     warnings = prune_stale_sessions()
     if _win.port_in_use(port):
@@ -346,7 +432,7 @@ def open_browser(
     warnings.extend(profile_warnings)
     launch_dir = profile_dir if profile == "temp" else user_data_dir
 
-    proc = _launch(chrome, port, launch_dir)
+    proc = _launch(chrome, port, launch_dir, extra_args)
     probe_timeout = min(timeout, 10.0) if profile == "default" else timeout
     try:
         version = _wait_for_cdp(port, probe_timeout, proc, profile)
@@ -398,6 +484,9 @@ def open_browser(
         if user_data_dir
         else (str(profile_dir) if profile_dir else None),
         user_data_dir_source=user_data_dir_source if profile == "default" else "temp",
+        proxy=normalized_proxy,
+        proxy_bypass=proxy_bypass or None,
+        stealth=stealth,
         warnings=warnings,
     )
     payload = session.to_dict()

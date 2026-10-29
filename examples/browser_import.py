@@ -25,6 +25,7 @@ PORT = 9222
 
 def main() -> int:
     # 1) 打开：profile="temp" 是默认值，临时目录落在 project_dir 下
+    #    需要代理时：browser.open_browser(port=PORT, proxy="socks5://127.0.0.1:1080", stealth=True)
     try:
         session = browser.open_browser(port=PORT, profile="temp", project_dir=".")
     except SsstoolError as exc:

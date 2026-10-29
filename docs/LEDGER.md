@@ -58,6 +58,9 @@
 | 13 | 真实用户配置目录探测 + `browser profile` | 用户指出真实配置可能是具体路径而非常量 Default。实测：注册表只有配置 `UserDataDir` 策略时才记录该路径；运行中的 Chrome 子进程命令行会带真实 `--user-data-dir`，快捷方式也可能带参数 → 必须按优先级探测，不能假设 | `_win.resolve_chrome_user_data_dir`（策略/运行态/快捷方式/标准路径）、`_win.chrome_processes`、`_win._flag_user_data_dir`、`browser.profile_info`、`cli.py browser profile` | 实测正常运行 → `running-process` + 标准路径；用自定义 `--user-data-dir` 启动 → 探测到自定义路径、`standard: no`；6 条新单测 |
 | 14 | 新增 `examples/browser_import.py`（库模式示例）+ 库模式文档 | 用户需要 import 用法；示例必须可运行、可被 wheel 安装环境直接执行，不能是文档里的伪代码 | `examples/browser_import.py`、`pyproject.toml`（sdist include）、`docs/capabilities/browser.md`、`README.md`、`AGENTS.md` 目录地图 | 仓库内实跑 exit=0；wheel 安装后实跑 exit=0（见证据） |
 | 15 | close / 失败回滚兜底清理残留 chrome 子进程 | 实测 `close` 后仍残留 1 个 renderer 持有已删除的 profile 路径（树杀漏掉被重挂的子进程），「完整回收」不成立 | `browser._kill_profile_processes`（按命令行含 profile 绝对路径匹配）、`close_browser` 与 `_abort_launch` 调用 | 修复后跑示例：`orphan_chrome=0`、端口空闲、`.ssstool/browser` 消失；单测 `test_kill_profile_processes_targets_only_matching` |
+| 16 | 原生无认证代理参数 `--proxy` / `--proxy-bypass` | 用户要求只支持原生代理；中继/扩展成本高且 Chrome 137+ 不允许自动加载扩展。实现代理 URL 校验（http/https/socks5）、拒绝 socks4 与凭据、透传 Chrome `--proxy-server`/`--proxy-bypass-list` | `browser._normalize_proxy`、`open_browser` 参数、`cli.py --proxy/--proxy-bypass`、`Session.proxy/proxy_bypass` | 实跑 `--proxy http://127.0.0.1:1` → 导航 `ERR_PROXY_CONNECTION_FAILED`；非法输入 exit=2；单测 3 条 |
+| 17 | 反检测启动参数 `--stealth` | 反爬调研结论：WebRTC/QUIC/DNS 属于启动期原生开关能处理的部分；CDP/JS 指纹不在本工具范围。实现 4 个原生参数，并强制依赖 `--proxy` | `browser._stealth_args`、`open_browser` 校验、`cli.py --stealth`、`Session.stealth` | 实跑命令行为包含 4 个参数；`--stealth` 缺 `--proxy` exit=2；导航被代理拦截；单测 3 条 |
+| 18 | README 精简为介绍/导航 + 新增 `docs/library.md` | 工具增多后 README 里的用法会膨胀成第二个文档站；import 用法缺少集中说明；同时修正 README 里过期的 0.1.0 示例与 CC BY-ND 许可证描述 | `README.md`（重写）、`docs/library.md`（新增）、`docs/README.md`、`docs/capabilities/browser.md`、`examples/browser_import.py`、`AGENTS.md` 目录地图 | 链接检查 0 断链；`pytest` 40 passed；README 只保留安装/上手/导航，细节全部落在 `docs/` |
 
 **验证证据**（本机 Windows，Chrome 156.0.8078.73，CPython 3.12.13）
 
@@ -128,6 +131,21 @@ closed pid=11552 profile_removed=True      # exit=0，port9222_listen=False
 # 第 15 条修复前后对比：
 #   修复前：close 后 orphan_chrome=1（renderer 仍持有已删除的 profile 路径）
 #   修复后：orphan_chrome=0、port9222_listen=False、.ssstool/browser 已消失
+
+$ ssstool browser open --port 9222 --proxy http://127.0.0.1:1 --stealth
+proxy   : http://127.0.0.1:1
+stealth : on (webrtc/quic/dns-prefetch + local DNS blocked)      # exit=0
+
+# 实际 Chrome 命令行：
+--proxy-server=http://127.0.0.1:1 --force-webrtc-ip-handling-policy=disable_non_proxied_udp
+--disable-quic --dns-prefetch-disable "--host-resolver-rules=MAP * ~NOTFOUND"
+
+# CDP 导航结果：
+{"errorText": "net::ERR_PROXY_CONNECTION_FAILED"}                # 代理确实生效
+
+$ ssstool browser open --stealth                                 # exit=2，缺 --proxy
+$ ssstool browser open --proxy http://u:p@127.0.0.1:8080         # exit=2，带凭据
+$ ssstool browser open --proxy socks4://127.0.0.1:1080           # exit=2，socks4 泄漏 DNS
 ```
 
 **影响与兼容性**：新增命令，0.1.0 现有行为不变；`requires-python`、依赖、打包结构不变。版本按 minor 升到 0.2.0。
@@ -140,6 +158,8 @@ closed pid=11552 profile_removed=True      # exit=0，port9222_listen=False
 - CDP 端口无鉴权，仅绑定 `127.0.0.1`；临时 profile 已把风险隔离。
 - 未做多实例列表命令；僵尸会话在下次 `open` 时自动清理。
 - 配置目录探测依赖 PowerShell（`Get-CimInstance` / `WScript.Shell`）；PowerShell 不可用时退化为标准路径。
+- `--stealth` 只处理浏览器原生开关；CDP 协议痕迹、JS 指纹、IP 信誉不在范围内。
+- DoH 未强制关闭，需要时用企业策略 `DnsOverHttpsMode=off`。
 
 **下一步**
 

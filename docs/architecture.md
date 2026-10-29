@@ -161,5 +161,6 @@ cli.py (argparse)
 2. **关闭前双校验**：端口归属 == 记录 PID，且镜像名 == `chrome.exe`；任一不符拒绝执行。
 3. **临时 profile 必须删**：删除前校验路径形如 `.ssstool/browser/<run_id>/profile`，防止状态文件被篡改后删任意目录。
 4. **配置目录不靠猜**：`--profile default` 的解析顺序是 策略 → 运行态 `--user-data-dir` → 快捷方式 → 标准路径；`browser profile` 把结果与来源（source）一起暴露，避免「以为在 User Data 其实不是」。
+5. **代理与反检测只走原生开关**：`--proxy` / `--stealth` 通过 Chrome 命令行注入，不注入 JS、不改 CDP；`--stealth` 依赖 `--proxy`，否则 DNS 规则会破坏直连。
 
 为什么默认 `--profile temp`：Chrome 136+ 在默认用户配置下忽略 `--remote-debugging-port`（实测本机 Chrome 156 返回空端口），而 `temp` 才能稳定拿到 CDP。`--profile default` 保留为显式选项：必须 `--force`，先终止所有 chrome.exe 再重启真实 profile；实测杀光后 Chrome 156 仍拒绝远程调试，因此失败时退出码 3、浏览器保留运行，不假装成功。

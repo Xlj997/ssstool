@@ -71,6 +71,9 @@ use --profile temp for a reliable endpoint.                              # exit=
 | `--project-dir` | open | 当前工作目录 | 临时 profile 的归属项目根 |
 | `--chrome` | open | 注册表 | 显式指定 chrome.exe |
 | `--force` | open（default 必填） | 关 | 确认「终止所有 Chrome 窗口」，仅 `--profile default` 使用 |
+| `--proxy` | open | 无 | 无认证代理：`http://host:port`、`https://host:port`、`socks5://host:port`；拒绝 `socks4://` 与带账号密码的 URL |
+| `--proxy-bypass` | open | 无 | Chrome 的绕过列表（如 `<local>`）；必须配合 `--proxy` |
+| `--stealth` | open | 关 | 反检测启动参数：禁 WebRTC 非代理 UDP、QUIC、DNS 预取，并禁止本地域名解析；必须配合 `--proxy` |
 | `--timeout` | open / close | 30 / 20 秒 | 等待 CDP 就绪 / 等待进程退出 |
 | `--json` | open / close | 关闭 | 输出机器可读 JSON |
 
@@ -80,8 +83,40 @@ use --profile temp for a reliable endpoint.                              # exit=
 | --- | --- | --- |
 | 0 | 成功 | 浏览器已开且 CDP 可用；关闭已完成回收 |
 | 1 | 业务失败 | 端口被占用、Chrome 未安装、端口归属不是 chrome.exe、拒绝杀未验证进程 |
-| 2 | 参数/用法错误 | 端口越界、`--project-dir` 不存在 |
+| 2 | 参数/用法错误 | 端口越界、`--project-dir` 不存在、非法代理 URL、`--stealth` 缺 `--proxy` |
 | 3 | CDP 不可用 | 默认 profile 模式（Chrome 136+）、Chrome 启动即退出、等待超时 |
+
+## 代理与反检测参数（`--proxy` / `--stealth`）
+
+```console
+$ ssstool browser open --port 9222 \
+    --proxy socks5://127.0.0.1:1080 \
+    --proxy-bypass "<local>" \
+    --stealth
+proxy   : socks5://127.0.0.1:1080
+bypass  : <local>
+stealth : on (webrtc/quic/dns-prefetch + local DNS blocked)
+```
+
+`--stealth` 实际注入的 Chrome 启动参数：
+
+| 参数 | 作用 |
+| --- | --- |
+| `--force-webrtc-ip-handling-policy=disable_non_proxied_udp` | 禁 WebRTC 走非代理 UDP，堵真实公网 IP |
+| `--disable-quic` | 防 UDP 443 绕过代理 |
+| `--dns-prefetch-disable` | 防预取触发本地 DNS |
+| `--host-resolver-rules=MAP * ~NOTFOUND` | 本地域名解析全部失败；代理是 IP 时无需解析 |
+
+规则与边界：
+
+1. **只支持无认证代理**：`--proxy` 带 `user:pass@` 直接拒绝（退出码 2），提示改用本地中继注入 `Proxy-Authorization`。
+2. **拒绝 `socks4://`**：SOCKS4 本地解析域名，会泄漏 DNS；用 `socks5://`（远端解析）。
+3. **`--stealth` 必须配 `--proxy`**：否则 `MAP * ~NOTFOUND` 会让所有导航失败（退出码 2）。
+4. **代理是域名时自动加 `EXCLUDE`**：`--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE proxy.example.com`，否则 Chrome 连代理本身都解析不了。
+5. **CDP 不受影响**：调试端口绑定 `127.0.0.1` 直连，不走代理。
+6. **不处理的**：DoH（建议策略 `DnsOverHttpsMode=off`）、浏览器内部服务流量、CDP 协议痕迹、IP 信誉——不在启动参数能力范围内。
+
+实测：`--proxy http://127.0.0.1:1 --stealth` 启动后，导航返回 `net::ERR_PROXY_CONNECTION_FAILED`，证明代理与解析规则确实生效。
 
 ## 通过 import 使用（库模式）
 
@@ -105,15 +140,15 @@ finally:
 
 | 函数 | 参数（keyword-only） | 返回 |
 | --- | --- | --- |
-| `browser.open_browser` | `port=9222`、`profile="temp"`、`project_dir=None`、`chrome_path=None`、`timeout=30.0`、`force=False` | `Session` |
+| `browser.open_browser` | `port=9222`、`profile="temp"`、`project_dir=None`、`chrome_path=None`、`timeout=30.0`、`force=False`、`proxy=None`、`proxy_bypass=None`、`stealth=False` | `Session` |
 | `browser.close_browser` | `port=9222`、`timeout=20.0` | `CloseResult` |
 | `browser.profile_info` | — | `dict` |
 
-`Session` 字段：`run_id`、`pid`、`port`、`profile`、`profile_dir`、`project_dir`、`chrome`、`cdp_url`、`ws_url`、`browser_version`、`started_at`、`user_data_dir`、`user_data_dir_source`、`warnings`。
+`Session` 字段：`run_id`、`pid`、`port`、`profile`、`profile_dir`、`project_dir`、`chrome`、`cdp_url`、`ws_url`、`browser_version`、`started_at`、`user_data_dir`、`user_data_dir_source`、`proxy`、`proxy_bypass`、`stealth`、`warnings`。
 
 `CloseResult` 字段：`port`、`pid`、`already_stopped`、`profile_dir`、`profile_removed`、`warnings`。
 
-可直接运行的完整示例：[examples/browser_import.py](../../examples/browser_import.py)。
+可直接运行的完整示例：[examples/browser_import.py](../../examples/browser_import.py)；完整库模式指南（参数、错误码、Playwright 接法）见 [docs/library.md](../library.md)。
 
 ## 临时 profile 放哪：设计推理
 
@@ -180,6 +215,8 @@ $ ssstool browser profile --json
 8. Windows 防火墙首次可能对监听端口弹窗；仅 `127.0.0.1`，拒绝即可（不影响本机访问）。
 9. 配置探测依赖 PowerShell（`Get-CimInstance`、`WScript.Shell`）；PowerShell 不可用时退化为标准路径。
 10. 仅 Windows；其他平台返回 `Windows only`（退出码 1）。
+11. `--stealth` 只注入浏览器原生开关，不注入 JS、不改 CDP 痕迹、不处理 IP 信誉；高级风控仍需 IP 与行为配合。
+12. `--stealth` 不强制关闭 DoH；需要时用企业策略 `DnsOverHttpsMode=off`。
 
 ## 排障
 
@@ -197,14 +234,14 @@ $ ssstool browser profile --json
 | 文件 | 作用 |
 | --- | --- |
 | `src/ssstool/cli.py` | `browser open/close` 子命令注册与输出格式 |
-| `src/ssstool/browser.py` | 启动、CDP 就绪等待、会话记录、关闭回收 |
+| `src/ssstool/browser.py` | 启动、代理/反检测参数注入、CDP 就绪等待、会话记录、关闭回收 |
 | `src/ssstool/_win.py` | 注册表查 Chrome、**用户配置目录探测**、端口占用/归属、进程名校验、进程树终止 |
 | `src/ssstool/_state.py` | 会话状态持久化（`%LOCALAPPDATA%\ssstool\sessions`） |
 | `src/ssstool/errors.py` | 带退出码的业务异常 |
 
 ## 验证
 
-`tests/test_browser.py`（共 19 条）：
+`tests/test_browser.py`：
 
 - 端口感知：`test_port_in_use_detects_listener`
 - 注册表命令行解析：`test_path_from_command_quoted`、`test_path_from_command_unquoted_with_args`
@@ -212,6 +249,7 @@ $ ssstool browser profile --json
 - 临时 profile：`test_prepare_profile_creates_self_ignoring_dir`、`test_prepare_profile_rejects_missing_project_dir`
 - 关闭安全：`test_close_refuses_unrecorded_listener`、`test_close_refuses_pid_reuse`、`test_close_dead_session_still_cleans_profile`、`test_kill_profile_processes_targets_only_matching`
 - 配置目录探测：`test_flag_user_data_dir_parsing`、`test_running_user_data_dir_skips_ssstool_temp`、`test_resolve_user_data_dir_priority`、`test_resolve_user_data_dir_raises_when_missing`、`test_profile_info_reports_standard_flag`、`test_cli_browser_profile_prints_detected_path`
+- 代理与硬化：`test_normalize_proxy_accepts_http_and_socks5`、`test_normalize_proxy_rejects_bad_input`、`test_stealth_args_disable_webrtc_quic_and_local_dns`、`test_open_stealth_requires_proxy`、`test_open_proxy_bypass_requires_proxy`、`test_open_passes_proxy_and_stealth_args`、`test_cli_browser_open_stealth_without_proxy_exits_2`
 - 真实端到端（`SSSTOOL_E2E=1`）：`test_e2e_open_and_close_real_chrome` — 开、查 CDP、验 PID/端口归属、关、验目录删除与端口释放
 
 ## 变更历史
@@ -219,3 +257,5 @@ $ ssstool browser profile --json
 - 0.2.0：新增（见台账 v0.2.0）。
 - 0.2.0（发布前补丁）：`--profile default` 改为「先终止全部 Chrome 再重启」，并要求 `--force`；实测杀光后仍无 CDP，失败时保留浏览器运行。
 - 0.2.0（发布前补丁）：新增 `browser profile`，按「策略 → 运行态命令行 → 快捷方式 → 标准路径」探测真实用户配置，不再假设一定是 Default 目录。
+- 0.2.0（发布前补丁）：新增 `--proxy` / `--proxy-bypass`，只支持无认证 HTTP/HTTPS/SOCKS5，拒绝 socks4 与带凭据 URL。
+- 0.2.0（发布前补丁）：新增 `--stealth`，注入 WebRTC/QUIC/DNS 预取/本地解析四项原生开关，强制依赖 `--proxy`。

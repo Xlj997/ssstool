@@ -9,7 +9,8 @@
 | [capabilities/README.md](capabilities/README.md) | 现在到底有哪些能力？每个能力的状态？ | 接需求、对外介绍、判断能不能用 | 改能力的人 |
 | [capabilities/version.md](capabilities/version.md) | 版本查询怎么用、边界在哪？ | 装完自检、排查版本不一致 | 改 CLI 的人 |
 | [capabilities/doctor.md](capabilities/doctor.md) | 环境自检输出什么、能证明什么？ | 用户报「跑不起来」时 | 改 CLI 的人 |
-| [capabilities/browser.md](capabilities/browser.md) | 怎么开/关带 CDP 的 Chrome、临时 profile 放哪、回收规则 | 需要接管浏览器时 | 改 browser 能力的人 |
+| [capabilities/browser.md](capabilities/browser.md) | 怎么开/关带 CDP 的 Chrome、临时 profile 放哪、回收规则、代理与反检测参数 | 需要接管浏览器时 | 改 browser 能力的人 |
+| [library.md](library.md) | 库模式：import 用法、API、返回值、错误码、Playwright 接法 | 在 Python 脚本里调用时 | 改公共 API 的人 |
 | [architecture.md](architecture.md) | 目录结构、版本单一来源、CLI 与打包约定 | 动手改代码前 | 架构改动的人 |
 | [LEDGER.md](LEDGER.md) | 每个版本改了什么、为什么、动了哪些文件、怎么验证 | 每次发版前、追溯历史决策 | 发版的人 |
 | [release-process.md](release-process.md) | 从改版本号到 PyPI 上线要过哪些门 | 每次发版 | 发版的人 |
@@ -33,11 +34,16 @@ docs/
 ├─ LEDGER.md                  工具发展台账（唯一版本事实来源）
 ├─ release-process.md         发布 SOP
 ├─ architecture.md            工程结构与技术约定
+├─ library.md                 库模式（import）指南
 └─ capabilities/
    ├─ README.md               能力登记表（对外能力的唯一清单）
    ├─ _TEMPLATE.md            新能力文档模板
    ├─ version.md              能力：版本查询
-   └─ doctor.md               能力：环境自检
+   ├─ doctor.md               能力：环境自检
+   └─ browser.md              能力：Chrome + CDP、代理与反检测
 ```
+
+根目录的 `README.md` 只做**介绍、安装、30 秒上手与导航**；具体用法进本目录，避免 README
+随着能力增加变成第二个文档站。
 
 新增能力文档：复制 `capabilities/_TEMPLATE.md` 为 `capabilities/<英文短名>.md`，并在 `capabilities/README.md` 登记表加一行。

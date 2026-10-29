@@ -9,6 +9,7 @@
 | `core.version` | 版本查询：当前安装的是哪一版 | `ssstool --version`、`python -m ssstool --version`、`ssstool.__version__`、`ssstool.get_version()` | 可用 | 0.1.0 | [version.md](version.md) |
 | `core.doctor` | 环境自检：包版本、Python、解释器路径、平台 | `ssstool doctor` | 可用 | 0.1.0 | [doctor.md](doctor.md) |
 | `browser.open` | 打开一个受控 Chrome 实例并暴露 CDP 端点（Windows） | `ssstool browser open [--port 9222] [--profile temp\|default]` | 可用 | 0.2.0 | [browser.md](browser.md) |
+| `browser.hardening` | 无认证代理 + 反检测启动参数（WebRTC/QUIC/DNS 预取硬化） | `ssstool browser open --proxy <url> [--proxy-bypass <list>] [--stealth]` | 可用 | 0.2.0 | [browser.md](browser.md) |
 | `browser.close` | 关闭 ssstool 启动的 Chrome，释放端口并删除临时 profile | `ssstool browser close [--port 9222]` | 可用 | 0.2.0 | [browser.md](browser.md) |
 | `browser.profile` | 探测真实 Chrome 用户配置目录（策略/运行态/快捷方式/标准路径） | `ssstool browser profile [--json]` | 可用 | 0.2.0 | [browser.md](browser.md) |
 

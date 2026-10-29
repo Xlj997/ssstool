@@ -278,7 +278,9 @@ def test_open_default_profile_kills_chrome_and_keeps_browser_on_cdp_gap(
     launched: list[Path | None] = []
     monkeypatch.setattr(_win, "kill_all_chrome", lambda: calls.append("kill") or 3)
     monkeypatch.setattr(
-        browser, "_launch", lambda chrome, port, data_dir: launched.append(data_dir) or object()
+        browser,
+        "_launch",
+        lambda chrome, port, data_dir, extra_args=None: launched.append(data_dir) or object(),
     )
 
     def fake_wait(*args: object, **kwargs: object) -> dict[str, object]:
@@ -397,6 +399,118 @@ def test_cli_browser_profile_prints_detected_path(
     out = capsys.readouterr().out
     assert "running-process" in out
     assert "User Data" in out
+
+
+def test_normalize_proxy_accepts_http_and_socks5() -> None:
+    assert browser._normalize_proxy("socks5://127.0.0.1:1080") == "socks5://127.0.0.1:1080"
+    assert browser._normalize_proxy("HTTP://proxy.local:3128") == "http://proxy.local:3128"
+    assert browser._normalize_proxy("socks5://127.0.0.1:1080/") == "socks5://127.0.0.1:1080"
+    assert browser._normalize_proxy("socks5://[::1]:1080") == "socks5://[::1]:1080"
+
+
+def test_normalize_proxy_rejects_bad_input() -> None:
+    for value in (
+        "socks4://127.0.0.1:1080",
+        "http://user:pass@127.0.0.1:8080",
+        "http://127.0.0.1",
+        "http://127.0.0.1:8080/path",
+        "http://127.0.0.1:notaport",
+    ):
+        with pytest.raises(SsstoolError) as excinfo:
+            browser._normalize_proxy(value)
+        assert excinfo.value.code == 2
+
+
+def test_stealth_args_disable_webrtc_quic_and_local_dns() -> None:
+    args = browser._stealth_args("socks5://127.0.0.1:1080")
+    assert "--force-webrtc-ip-handling-policy=disable_non_proxied_udp" in args
+    assert "--disable-quic" in args
+    assert "--dns-prefetch-disable" in args
+    rule = next(item for item in args if item.startswith("--host-resolver-rules="))
+    assert "MAP * ~NOTFOUND" in rule
+    assert "EXCLUDE" not in rule
+
+    host_rule = next(
+        item
+        for item in browser._stealth_args("http://proxy.example.com:3128")
+        if item.startswith("--host-resolver-rules=")
+    )
+    assert "EXCLUDE proxy.example.com" in host_rule
+
+
+def test_open_stealth_requires_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_win, "ensure_windows", lambda: None)
+    with pytest.raises(SsstoolError) as excinfo:
+        browser.open_browser(port=9222, stealth=True)
+    assert excinfo.value.code == 2
+    assert "--stealth requires --proxy" in excinfo.value.message
+
+
+def test_open_proxy_bypass_requires_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_win, "ensure_windows", lambda: None)
+    with pytest.raises(SsstoolError) as excinfo:
+        browser.open_browser(port=9222, proxy_bypass="<local>")
+    assert excinfo.value.code == 2
+
+
+def test_open_passes_proxy_and_stealth_args(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(_state.STATE_DIR_ENV, str(tmp_path / "state"))
+    monkeypatch.setattr(_win, "ensure_windows", lambda: None)
+    monkeypatch.setattr(_win, "port_in_use", lambda port: False)
+    monkeypatch.setattr(_win, "find_chrome", lambda explicit=None: Path("chrome.exe"))
+    monkeypatch.setattr(browser, "prune_stale_sessions", lambda: [])
+    profile_dir = tmp_path / ".ssstool" / "browser" / "run-p" / "profile"
+    profile_dir.mkdir(parents=True)
+    monkeypatch.setattr(browser, "_prepare_profile", lambda *args: (profile_dir, []))
+    captured: list[list[str]] = []
+    monkeypatch.setattr(
+        browser,
+        "_launch",
+        lambda chrome, port, data_dir, extra_args=None: (
+            captured.append(list(extra_args or [])) or object()
+        ),
+    )
+    monkeypatch.setattr(
+        browser,
+        "_wait_for_cdp",
+        lambda *args, **kwargs: {
+            "Browser": "Chrome/156",
+            "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/browser/x",
+        },
+    )
+    monkeypatch.setattr(_win, "port_owner", lambda port: 4321)
+    monkeypatch.setattr(_win, "process_name", lambda pid: "chrome.exe")
+
+    session = browser.open_browser(
+        port=9222,
+        proxy="socks5://127.0.0.1:1080",
+        proxy_bypass="<local>",
+        stealth=True,
+    )
+
+    assert captured == [
+        [
+            "--proxy-server=socks5://127.0.0.1:1080",
+            "--proxy-bypass-list=<local>",
+            "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+            "--disable-quic",
+            "--dns-prefetch-disable",
+            "--host-resolver-rules=MAP * ~NOTFOUND",
+        ]
+    ]
+    assert session.proxy == "socks5://127.0.0.1:1080"
+    assert session.proxy_bypass == "<local>"
+    assert session.stealth is True
+
+
+def test_cli_browser_open_stealth_without_proxy_exits_2(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(_win, "ensure_windows", lambda: None)
+    assert main(["browser", "open", "--stealth"]) == 2
+    assert "--stealth requires --proxy" in capsys.readouterr().err
 
 
 @pytest.mark.e2e

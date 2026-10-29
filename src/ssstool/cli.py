@@ -66,6 +66,9 @@ def _cmd_browser_open(args: argparse.Namespace) -> int:
             chrome_path=args.chrome,
             timeout=args.timeout,
             force=args.force,
+            proxy=args.proxy,
+            proxy_bypass=args.proxy_bypass,
+            stealth=args.stealth,
         )
     except SsstoolError as exc:
         print(f"error: {exc.message}", file=sys.stderr)
@@ -97,6 +100,12 @@ def _cmd_browser_open(args: argparse.Namespace) -> int:
         )
     else:
         lines.append(f"profile : {session.profile}")
+    if session.proxy:
+        lines.append(f"proxy   : {session.proxy}")
+    if session.proxy_bypass:
+        lines.append(f"bypass  : {session.proxy_bypass}")
+    if session.stealth:
+        lines.append("stealth : on (webrtc/quic/dns-prefetch + local DNS blocked)")
     print("\n".join(lines))
     return 0
 
@@ -182,6 +191,27 @@ def _add_browser_commands(subparsers: argparse._SubParsersAction) -> None:
     )
     open_parser.add_argument("--chrome", default=None, help="explicit chrome.exe path")
     open_parser.add_argument("--timeout", type=float, default=30.0, help="seconds to wait for CDP")
+    open_parser.add_argument(
+        "--proxy",
+        default=None,
+        help=(
+            "unauthenticated proxy URL: http://host:port, https://host:port or "
+            "socks5://host:port (socks4 and credentials are rejected)"
+        ),
+    )
+    open_parser.add_argument(
+        "--proxy-bypass",
+        default=None,
+        help="Chrome proxy bypass list (e.g. '<local>'); requires --proxy",
+    )
+    open_parser.add_argument(
+        "--stealth",
+        action="store_true",
+        help=(
+            "anti-detection launch flags: disable WebRTC non-proxied UDP, QUIC and DNS "
+            "prefetch, and block local DNS (requires --proxy)"
+        ),
+    )
     open_parser.add_argument(
         "--force",
         action="store_true",

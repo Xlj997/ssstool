@@ -28,6 +28,7 @@
 9. **禁止为过检查而降低标准**：不得放宽 lint/test 配置、删除断言、`skip` 用例、改测试来迁就实现。确有必要改配置，必须在台账写明原因与影响范围。
 10. **发布红线**：发布只能按 `docs/release-process.md` 执行。任何 agent **不得**自行执行 `uv publish`、不得打/推 tag、不得修改已发布版本号、不得删除 PyPI 上的历史文件。
 11. **浏览器回收红线**：`browser close` 只能操作通过「端口归属 == 记录 PID」且「镜像名 == chrome.exe」双重校验的进程；禁止按 PID 盲杀。临时 profile 必须删除，删除前必须校验路径形如 `.ssstool/browser/<run_id>/profile`。`--profile default` 属破坏性模式：必须要求 `--force`，执行前终止所有 chrome.exe；CDP 失败时不得杀掉刚重启的浏览器。任何放宽这些约束的实现都按安全缺陷处理。
+12. **代理与反检测边界**：只支持无认证 HTTP/HTTPS/SOCKS5 代理，拒绝 `socks4://` 与带凭据的 URL；`--stealth` 只能注入浏览器原生开关，禁止注入 JS 补丁或伪装 CDP；`--stealth` 必须与 `--proxy` 同时使用。
 
 ## 3. 本机环境坑（真实踩过，必须按此执行）
 
@@ -47,7 +48,7 @@ ssstool/
 ├─ pyproject.toml            构建/元数据/工具配置；版本号唯一来源
 ├─ .python-version           uv 解释器版本（3.12）
 ├─ uv.lock                   依赖锁文件，必须提交
-├─ README.md                 总览 + 安装 + 文档引用（不承诺未登记能力）
+├─ README.md                 总览 + 安装 + 导航（详细用法不放这里）
 ├─ AGENTS.md                 本文件：仓库硬约束
 ├─ LICENSE                   许可证全文（PolyForm Shield 1.0.0，非 OSI 开源）
 ├─ CONTRIBUTING.md           贡献规则：可做/不可做、分发义务与竞品边界
@@ -69,6 +70,7 @@ ssstool/
 │  ├─ LEDGER.md              工具发展台账（唯一版本事实来源）
 │  ├─ release-process.md     发布 SOP
 │  ├─ architecture.md        工程结构与约定
+│  ├─ library.md             库模式（import）指南
 │  └─ capabilities/          能力登记表 + 每个能力的文档
 └─ .github/workflows/        CI（ci.yml）与发布（release.yml）
 ```
