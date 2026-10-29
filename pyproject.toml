@@ -1,0 +1,82 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ssstool"
+version = "0.2.0"
+description = "3s 工具：轻量命令行与脚本工具包"
+readme = "README.md"
+requires-python = ">=3.10"
+# 非 OSI 开源：可自由使用、修改、分发（含商用），禁止提供竞争性产品。见 LICENSE 与 CONTRIBUTING.md。
+license = "LicenseRef-PolyForm-Shield-1.0.0"
+license-files = ["LICENSE"]
+authors = [{ name = "ssstool contributors" }]
+keywords = ["cli", "toolkit", "utilities", "ssstool"]
+dependencies = []
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Typing :: Typed",
+  "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/Xlj997/ssstool"
+Repository = "https://github.com/Xlj997/ssstool"
+Issues = "https://github.com/Xlj997/ssstool/issues"
+Changelog = "https://github.com/Xlj997/ssstool/blob/main/docs/LEDGER.md"
+
+[project.scripts]
+ssstool = "ssstool.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.6",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ssstool"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "src/ssstool",
+  "tests",
+  "examples",
+  "docs",
+  "README.md",
+  "AGENTS.md",
+  "CONTRIBUTING.md",
+  "pyproject.toml",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+extend-exclude = ["dist", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+# RUF001/002/003 检测的是西文语境下的同形字符（如全角冒号）。本项目文档与 CLI 文案以中文
+# 为主，全角标点是正确写法，关闭该组规则；其余 RUF 规则保留。
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+  "e2e: launches a real Chrome instance; opt-in via SSSTOOL_E2E=1",
+]

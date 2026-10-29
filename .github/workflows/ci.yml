@@ -1,0 +1,89 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags-ignore: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: quality (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Sync (locked)
+        run: uv sync --locked --python ${{ matrix.python-version }}
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Test
+        run: uv run python -m pytest
+
+  package-smoke:
+    name: package smoke (install wheel)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync (locked)
+        run: uv sync --locked
+
+      - name: Build
+        run: uv build
+
+      - name: Install wheel into a clean venv
+        run: |
+          set -euo pipefail
+          uv venv .smoke --python 3.12
+          uv pip install --python .smoke/bin/python dist/*.whl
+          .smoke/bin/ssstool --version
+          .smoke/bin/ssstool doctor
+          .smoke/bin/python -c "import ssstool; assert ssstool.__version__ != '0.0.0+source'"
+          rm -rf .smoke
+
+      - name: Check artifact contents
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import glob, zipfile, sys
+          wheel = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(wheel).namelist()
+          required = ["ssstool/py.typed"]
+          missing = [n for n in required if n not in names]
+          has_entry_points = any(n.endswith("entry_points.txt") for n in names)
+          print("\n".join(names))
+          if missing or not has_entry_points:
+              print(f"missing={missing} entry_points={has_entry_points}", file=sys.stderr)
+              sys.exit(1)
+          PY

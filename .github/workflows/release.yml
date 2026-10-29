@@ -1,0 +1,146 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Publish target"
+        required: true
+        default: testpypi
+        type: choice
+        options: [testpypi, pypi]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build and gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync (locked)
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Test
+        run: uv run python -m pytest
+
+      - name: Read version
+        id: version
+        run: echo "version=$(uv version --short)" >> "$GITHUB_OUTPUT"
+
+      - name: Verify tag matches pyproject version
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          PROJECT_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          expected="v${PROJECT_VERSION}"
+          if [ "$expected" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match pyproject version ${expected}"
+            exit 1
+          fi
+
+      - name: Build
+        run: uv build
+
+      - name: Install wheel into a clean venv
+        run: |
+          set -euo pipefail
+          uv venv .smoke --python 3.12
+          uv pip install --python .smoke/bin/python dist/*.whl
+          .smoke/bin/ssstool --version
+          .smoke/bin/ssstool doctor
+          rm -rf .smoke
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  meta:
+    name: resolve publish target
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      environment: ${{ steps.pick.outputs.environment }}
+      publish_url: ${{ steps.pick.outputs.publish_url }}
+    steps:
+      - name: Pick index
+        id: pick
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          EVENT_NAME: ${{ github.event_name }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$TARGET" = "pypi" ]; then
+              environment=pypi
+              publish_url=https://upload.pypi.org/legacy/
+            else
+              environment=testpypi
+              publish_url=https://test.pypi.org/legacy/
+            fi
+          elif printf '%s' "$VERSION" | grep -Eq '(a|b|rc|dev)[0-9]+$'; then
+            environment=testpypi
+            publish_url=https://test.pypi.org/legacy/
+          else
+            environment=pypi
+            publish_url=https://upload.pypi.org/legacy/
+          fi
+          echo "environment=$environment" >> "$GITHUB_OUTPUT"
+          echo "publish_url=$publish_url" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION -> $environment"
+
+  publish:
+    name: publish to ${{ needs.meta.outputs.environment }}
+    needs: [build, meta]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ needs.meta.outputs.environment }}
+    permissions:
+      id-token: write   # Trusted Publishing: OIDC 换取短期上传凭据，不使用长期 token
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: List artifacts
+        run: ls -l dist
+
+      - name: Publish
+        run: uv publish --publish-url "${{ needs.meta.outputs.publish_url }}" --trusted-publishing always dist/*
